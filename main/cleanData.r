@@ -11,7 +11,7 @@ library(glue)
 font_add("Canger", "/Library/Fonts/仓耳今楷01-W04.ttf")
 font_families()
 showtext_auto()  # 全局自动使用
-showtext_auto(FALSE) # 不需要就关闭
+#showtext_auto(FALSE) # 不需要就关闭
 
 setwd("/Users/sousekilyu/Documents/GitHub/PekingCollege")
 # Specify the path to your GeoJSON file
@@ -21,7 +21,7 @@ geojson_file <- "data/北京普通高等学校（分校区）.geojson"
 data <- st_read(geojson_file) %>%
   rename(Campus = "校区") %>%
   mutate(collegeName = paste0(Title, ',', Campus))
-data <- st_transform(data, crs = 4326)
+data <- st_transform(data, crs = 2333)
 
 # Set tmap options to check and fix geometry
 tmap_options(check.and.fix = TRUE)
@@ -39,8 +39,8 @@ library(lwgeom)
 data <- st_make_valid(data) 
 
 # Now try to create the buffer of 1km
-
 data_buffer <- st_buffer(data, dist = 500)
+data_buffer1000 <- st_buffer(data, dist = 1000)
 
 # Visualize the data_buffer
 qtm(data_buffer)
@@ -61,6 +61,7 @@ colnames(beijing_poi) <- c("name",
 beijing_poi_sf <- st_as_sf(beijing_poi,
                            coords = c("longitude", "latitude"),
                            crs = 4326)
+beijing_poi_sf <- st_transform(beijing_poi_sf, crs = 2333)
 
 # filter
 beijing_poi_sf_csm <- beijing_poi_sf %>%
@@ -71,8 +72,9 @@ beijing_poi_sf_csm <- beijing_poi_sf %>%
   mutate(id = 1:nrow(.))
 
 beijing_poi_sf_metro <- beijing_poi_sf %>%
-  filter((type2 %in% c('公交站', '地铁'))) %>%
-  mutate(type2 =  factor(type2, levels = c('公交站', '地铁'))) %>%
+  filter((type2 %in% c('地铁'))) %>%
+  filter(!grepl('地铁站', name)) %>%
+  mutate(type2 =  factor(type2, levels = c('地铁'))) %>%
   unique() %>%
   mutate(id = 1:nrow(.))
 # use tm_dots function to visualise it and set color in c("#fb8072", "#8dd3c7", "#ffffb3", "#bebada", "#80b1d3")
@@ -92,6 +94,8 @@ tm_shape(beijing_poi_sf_csm) +
 
 # pick up beijing_poi_sf_csm which is in the buffer of data_buffer, remaining c(Title, Campus, `所在区`, `办学水平`, gemoetry) of data_buffer and all columns of beijing_poi_sf_csm
 beijing_poi_sf_csm_in_buffer <- st_join(beijing_poi_sf_csm, data_buffer, join = st_within)
+beijing_poi_sf_csm_in_buffer1000 <- st_join(beijing_poi_sf_csm, data_buffer1000, join = st_within)
+
 beijing_poi_sf_csm_in <- st_join(beijing_poi_sf_csm, data, join = st_within)
 beijing_poi_sf_metro_in_buffer <- st_join(beijing_poi_sf_metro, data_buffer, join = st_within)
 
@@ -99,60 +103,49 @@ beijing_poi_sf_metro_in_buffer <- st_join(beijing_poi_sf_metro, data_buffer, joi
 # group by beijing_poi_sf_csm_in_buffer$collegeName, summarise the number of unique id 
 # and sort by the number of unique id
 freq_beijing_poi_sf_csm_in_buffer <- beijing_poi_sf_csm_in_buffer %>%
-  group_by(Title, Campus) %>%
+  group_by(Title, Campus, collegeName) %>%
+  summarise(n = n_distinct(id)) %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  filter(!is.na(Title))
+
+freq_beijing_poi_sf_csm_in_buffer1000 <- beijing_poi_sf_csm_in_buffer1000 %>%
+  group_by(Title, Campus, collegeName) %>%
   summarise(n = n_distinct(id)) %>%
   ungroup() %>%
   arrange(desc(n)) %>%
   filter(!is.na(Title))
 
 freq_beijing_poi_sf_csm_in <- beijing_poi_sf_csm_in %>%
-  group_by(Title, Campus) %>%
+  group_by(Title, Campus, collegeName) %>%
   summarise(n = n_distinct(id)) %>%
   ungroup() %>%
   arrange(desc(n)) %>%
   filter(!is.na(Title))
 
 freq_beijing_poi_sf_metro_in_buffer <- beijing_poi_sf_metro_in_buffer %>%
-  group_by(Title, Campus) %>%
+  group_by(Title, Campus, collegeName) %>%
   summarise(n = n_distinct(id)) %>%
   ungroup() %>%
   arrange(desc(n)) %>%
   filter(!is.na(Title))
   
-## plot reaction
-sample_poi_sum <- freq_beijing_poi_sf_csm_in_buffer %>%
-  filter(grepl('清华大学|北京大学', Title), grepl('本部|燕园Campus', Campus)) %>%
-  filter(n > 0) %>%
-  select(Title, Campus) %>%
-  mutate(collegeName = paste0(Title, ',', Campus))
-
-sample_college <- data %>%
-  filter(Title %in% sample_poi_sum$Title, Campus %in% sample_poi_sum$Campus) %>%
-  select(Title, Campus, `所在区`, `办学水平`, geometry) %>%
-  mutate(collegeName = paste0(Title, ',', Campus))
-sample_college_buffer <- data_buffer %>%
-  filter(Title %in% sample_poi_sum$Title, Campus %in% sample_poi_sum$Campus) %>%
-  select(Title, Campus, `所在区`, `办学水平`, geometry) %>%
-  mutate(collegeName = paste0(Title, ',', Campus))
-sample_poi <- beijing_poi_sf_csm_in_buffer %>%
-  filter(Title %in% sample_poi_sum$Title, Campus  %in% sample_poi_sum$Campus) %>%
-  select(name, type1, type2, id, geometry, Title, Campus) %>%
-  mutate(collegeName = paste0(Title, ',', Campus))
-
-plot <- tm_shape(sample_college_buffer) + 
-  tm_borders() +
-  tm_shape(sample_college) + 
-  tm_borders() +
-  tm_shape(sample_poi) + 
-  tm_dots(col = "type1", 
-          size = 0.01, 
-          palette = c("#fb8072", "#8dd3c7", "#ffffb3", "#bebada", "#80b1d3")) +
-  #tm_text("collegeName", size = 0.5) +
-  tm_layout(
-    fontfamily = 'Canger',
-    frame = T,
-    panel.label.size = 1,
-    legend.show = TRUE,
-    asp = 3/4
+## high way
+bj_highway <- st_read('/Users/sousekilyu/Documents/R/BeijingShanghai/data/北京路网.shp') %>%
+  st_transform(crs = 2333) %>%
+  dplyr::filter(
+    highway %in% c(
+      "primary",
+      "secondary",
+      "trunk",
+      "tertiary" ,
+      "secondary_link",
+      "trunk_link",
+      "primary_link" ,
+      "motorway"     ,
+      "tertiary_link" ,
+      "cycleway" ,
+      "motorway_link"
+    )
   )
-print(plot)
+
